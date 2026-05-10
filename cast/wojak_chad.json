@@ -1,0 +1,31 @@
+{
+  "name": "wojak_chad",
+  "description": "English wojak-vs-chad meme dialogue cast — sentimental tourists vs. apocalypse manager.",
+  "characters": [
+    {
+      "id": "GRANDDAUGHTER",
+      "voice": "en_us_001",
+      "description": "time-traveling descendant, sentimental, soft-spoken"
+    },
+    {
+      "id": "GRANDMOTHER",
+      "voice": "en_female_emotional",
+      "description": "the long-dead relative being reunited, surprised"
+    },
+    {
+      "id": "NARRATOR",
+      "voice": "en_male_narration",
+      "description": "deadpan TikTok narrator handling pivots"
+    },
+    {
+      "id": "CHAD",
+      "voice": "en_us_006",
+      "description": "the time-traveling extinction-event briefer, plain American calm"
+    },
+    {
+      "id": "DINOSAUR",
+      "voice": "en_male_m03_lobby",
+      "description": "the calmly competent T-rex, slow and dignified"
+    }
+  ]
+}

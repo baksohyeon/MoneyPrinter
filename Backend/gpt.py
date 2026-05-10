@@ -145,26 +145,15 @@ def generate_script(
     ai_model: str,
     voice: str,
     customPrompt: str,
+    cast=None,
 ) -> Optional[str]:
-    """
-    Generate a script for a video, depending on the subject of the video, the number of paragraphs, and the AI model.
+    """Generate a script for a video.
 
-
-
-    Args:
-
-        video_subject (str): The subject of the video.
-
-        paragraph_number (int): The number of paragraphs to generate.
-
-        ai_model (str): The AI model to use for generation.
-
-
-
-    Returns:
-
-        str: The script for the video.
-
+    When ``cast`` is provided (a Cast instance), a cast header is prepended
+    to the user's prompt instructing the model to emit each line as
+    ``[CHARACTER_ID] sentence``. The pipeline then routes each tagged line
+    to that character's voice. When ``cast`` is None, behavior is
+    backward-compatible (single narrator, single voice).
     """
 
     # Build prompt
@@ -192,8 +181,13 @@ def generate_script(
 
         """
 
+    if cast is not None:
+        from cast import format_cast_header
+
+        prompt = format_cast_header(cast) + prompt
+
     prompt += f"""
-    
+
     Subject: {video_subject}
     Number of paragraphs: {paragraph_number}
     Language: {voice}

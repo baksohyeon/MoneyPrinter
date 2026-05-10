@@ -1,0 +1,11 @@
+{
+  "name": "default",
+  "description": "Single-narrator template — clone this file to start a new cast.",
+  "characters": [
+    {
+      "id": "NARRATOR",
+      "voice": "en_male_narration",
+      "description": "deadpan TikTok narrator"
+    }
+  ]
+}

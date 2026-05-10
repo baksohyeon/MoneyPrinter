@@ -9,6 +9,7 @@ const useMusicToggle = document.getElementById("useMusicToggle");
 const aiBrollToggle = document.getElementById("aiBrollToggle");
 const customPrompt = document.getElementById("customPrompt");
 const providerStatus = document.getElementById("providerStatus");
+const castSelect = document.getElementById("cast");
 const generateButton = document.getElementById("generateButton");
 const cancelButton = document.getElementById("cancelButton");
 const advancedOptionsToggle = document.getElementById("advancedOptionsToggle");
@@ -105,6 +106,37 @@ async function loadOllamaModels(reuseEnabled) {
   } catch {
     setModelOptions([fallbackModel], fallbackModel);
     showToast("Could not load Ollama models. Is backend/Ollama running?", "error");
+  }
+}
+
+// ===== CAST DROPDOWN =====
+async function loadCasts(reuseEnabled) {
+  if (!castSelect) return;
+  try {
+    const data = await apiRequest("/api/casts", {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    const casts = Array.isArray(data.casts) ? data.casts : [];
+
+    // Clear all but the "(none — single narrator)" sentinel.
+    castSelect.innerHTML = '<option value="">(none — single narrator)</option>';
+
+    casts.forEach((c) => {
+      const option = document.createElement("option");
+      option.value = c.name;
+      option.textContent = `${c.name} (${c.characterCount}: ${c.description || ""})`.trim();
+      castSelect.appendChild(option);
+    });
+
+    if (reuseEnabled) {
+      const stored = localStorage.getItem("castValue");
+      if (stored !== null) {
+        castSelect.value = stored;
+      }
+    }
+  } catch {
+    // Backend offline: leave the sentinel option only.
   }
 }
 
@@ -373,6 +405,7 @@ async function generateVideo() {
     videoSubject: subject,
     aiModel: aiModel.value || "llama3.1:8b",
     voice: voice.value,
+    cast: castSelect ? castSelect.value : "",
     paragraphNumber: paragraphNumber.value,
     automateYoutubeUpload: youtubeToggle.checked,
     useMusic: useMusicToggle.checked,
@@ -437,6 +470,7 @@ const toggleIds = [
 ];
 const fieldIds = [
   "voice",
+  "cast",
   "paragraphNumber",
   "videoSubject",
   "customPrompt",
@@ -450,6 +484,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     localStorage.getItem("reuseChoicesToggleValue") === "true";
 
   await loadOllamaModels(reuseEnabled);
+  await loadCasts(reuseEnabled);
   loadProviderStatus();
 
   aiModel.addEventListener("change", (e) => {

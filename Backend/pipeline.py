@@ -6,6 +6,8 @@ from apiclient.errors import HttpError
 from moviepy import AudioFileClip, concatenate_audioclips
 from uuid import uuid4
 
+from cast import CastError, load_cast
+from dialogue import parse_script
 from effects.ken_burns import KenBurnsAsset
 from gpt import generate_metadata, generate_script, get_search_terms
 from logstream import log
@@ -58,6 +60,24 @@ def run_generation_pipeline(
     encoder_override = (provider_overrides.get("encoder") or "").strip() or None
     subtitles_override = (provider_overrides.get("subtitles") or "").strip() or None
 
+    # Optional cast for dialogue-mode shorts. Empty / missing / invalid →
+    # fall back to single-narrator mode (existing behavior).
+    cast = None
+    cast_name = (data.get("cast") or "").strip()
+    if cast_name:
+        try:
+            cast = load_cast(cast_name)
+            emit(
+                f"[+] Cast loaded: {cast.name} ({len(cast.characters)} characters)",
+                "info",
+            )
+        except CastError as exc:
+            emit(
+                f"[!] Cast '{cast_name}' could not be loaded ({exc}). "
+                "Falling back to single-narrator mode.",
+                "warning",
+            )
+
     emit("[Video to be generated]", "info")
     emit("   Subject: " + data["videoSubject"], "info")
     emit("   AI Model: " + str(ai_model), "info")
@@ -79,6 +99,7 @@ def run_generation_pipeline(
         ai_model,
         voice,
         data["customPrompt"],
+        cast=cast,
     )
 
     if not script:
@@ -232,37 +253,50 @@ def run_generation_pipeline(
 
     guard_cancelled()
 
-    sentences = script.split(". ")
-    sentences = list(filter(lambda x: x != "", sentences))
+    # Parse the script into dialogue lines. With a cast, lines tagged
+    # [CHARACTER_ID] are routed to that character's voice; without (or on
+    # untagged output) every line gets the job's default voice.
+    dialogue_lines = parse_script(script, cast, default_voice=voice)
+    if not dialogue_lines:
+        raise RuntimeError("Script produced zero usable lines.")
 
-    tts_paths = [str(TEMP_DIR / f"{uuid4()}.mp3") for _ in sentences]
+    if cast is not None:
+        line_summary = ", ".join(
+            f"[{l.character_id}]" if l.character_id else "[narrator]"
+            for l in dialogue_lines
+        )
+        emit(f"[+] Dialogue: {len(dialogue_lines)} line(s) — {line_summary}", "info")
+
+    tts_paths = [str(TEMP_DIR / f"{uuid4()}.mp3") for _ in dialogue_lines]
     tts_workers = int(os.getenv("PARALLEL_TTS_WORKERS", "4"))
 
-    def _synthesize(idx_sentence):
-        idx, sentence = idx_sentence
-        tts(sentence, voice, filename=tts_paths[idx])
+    def _synthesize(idx_line):
+        idx, line = idx_line
+        tts(line.text, line.voice or voice, filename=tts_paths[idx])
         return tts_paths[idx]
 
     parallel_map(
         _synthesize,
-        list(enumerate(sentences)),
+        list(enumerate(dialogue_lines)),
         max_workers=tts_workers,
         on_error=lambda pair, exc: emit(
-            f"[-] TTS failed for sentence #{pair[0]}: {exc}", "error"
+            f"[-] TTS failed for line #{pair[0]} ([{pair[1].character_id or 'narrator'}]): {exc}",
+            "error",
         ),
         is_cancelled=is_cancelled,
     )
 
-    # Keep sentences and audio clips aligned — drop entries where synth failed.
-    aligned_sentences: list[str] = []
+    # Keep dialogue lines and audio clips aligned — drop where synth failed.
+    aligned_lines = []
     paths: list[AudioFileClip] = []
-    for sentence, p in zip(sentences, tts_paths):
+    for line, p in zip(dialogue_lines, tts_paths):
         if os.path.exists(p):
-            aligned_sentences.append(sentence)
+            aligned_lines.append(line)
             paths.append(AudioFileClip(p))
-    sentences = aligned_sentences
     if not paths:
         raise RuntimeError("All TTS calls failed; cannot continue.")
+    # Subtitles still want plain sentence text — strip away character tags.
+    sentences = [l.text for l in aligned_lines]
 
     final_audio = concatenate_audioclips(paths)
     tts_path = str(TEMP_DIR / f"{uuid4()}.mp3")

@@ -865,9 +865,21 @@
                 </div>
 
                 <div class="form-group">
+                  <label for="cast" class="label">
+                    Cast
+                    <span class="label-hint">&mdash; pick a multi-character cast for dialogue mode. Leave blank for a single narrator.</span>
+                  </label>
+                  <select id="cast" name="cast" class="form-select">
+                    <option value="">(none — single narrator)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <div class="form-group">
                   <label for="voice" class="label">
                     Voice
-                    <span class="label-hint">&mdash; TikTok TTS voice the narration is read in.</span>
+                    <span class="label-hint">&mdash; TikTok TTS voice for the narrator. Cast lines override this per-line.</span>
                   </label>
                   <select id="voice" name="voice" class="form-select">
                     <optgroup label="Character">
@@ -943,22 +955,22 @@
                     </optgroup>
                   </select>
                 </div>
-              </div>
 
-              <div class="form-group">
-                <label for="paragraphNumber" class="label">
-                  Paragraphs
-                  <span class="label-hint">&mdash; how many paragraphs the script should be. More = longer video.</span>
-                </label>
-                <input
-                  type="number"
-                  id="paragraphNumber"
-                  name="paragraphNumber"
-                  class="form-input"
-                  value="1"
-                  min="1"
-                  max="100"
-                />
+                <div class="form-group">
+                  <label for="paragraphNumber" class="label">
+                    Paragraphs
+                    <span class="label-hint">&mdash; how many paragraphs the script should be. More = longer video.</span>
+                  </label>
+                  <input
+                    type="number"
+                    id="paragraphNumber"
+                    name="paragraphNumber"
+                    class="form-input"
+                    value="1"
+                    min="1"
+                    max="100"
+                  />
+                </div>
               </div>
 
               <div class="form-group">

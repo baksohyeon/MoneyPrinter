@@ -46,6 +46,28 @@ def models():
         )
 
 
+@app.route("/api/casts", methods=["GET"])
+def casts_index():
+    """List every valid cast/<name>.json so the frontend can populate the
+    Cast dropdown. Invalid files are silently skipped (matches list_casts())."""
+    from cast import list_casts
+
+    summaries = list_casts()
+    return jsonify(
+        {
+            "status": "success",
+            "casts": [
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "characterCount": s.character_count,
+                }
+                for s in summaries
+            ],
+        }
+    )
+
+
 @app.route("/api/providers", methods=["GET"])
 def providers_status():
     """Snapshot of which providers the pipeline would auto-select right now.
