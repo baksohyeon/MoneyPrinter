@@ -9,7 +9,7 @@ from uuid import uuid4
 from gpt import generate_metadata, generate_script, get_search_terms
 from logstream import log
 from parallel import parallel_map
-from search import search_for_stock_videos
+from providers.stock import get_stock_providers
 from tiktokvoice import tts
 from utils import (
     BASE_DIR,
@@ -81,29 +81,54 @@ def run_generation_pipeline(
     )
 
     it = 15
-    # Pexels filter: niche topics have few long clips; 3s helps. Override: PEXELS_MIN_VIDEO_DURATION_SECONDS
+    # Niche topics have few long clips; 3s helps. Override: PEXELS_MIN_VIDEO_DURATION_SECONDS
     min_dur = int(os.getenv("PEXELS_MIN_VIDEO_DURATION_SECONDS", "3"))
-    pexels_api_key = os.getenv("PEXELS_API_KEY")
+
+    providers = get_stock_providers()
+    if not providers:
+        raise RuntimeError(
+            "No stock-video providers enabled. Set PEXELS_API_KEY (and optionally "
+            "PIXABAY_API_KEY / COVERR_API_KEY) in .env."
+        )
+    emit(
+        f"[+] Stock providers enabled: {', '.join(p.name for p in providers)}",
+        "info",
+    )
 
     guard_cancelled()
     search_workers = int(os.getenv("PARALLEL_SEARCH_WORKERS", "8"))
-    search_results = parallel_map(
-        lambda term: search_for_stock_videos(term, pexels_api_key, it, min_dur),
-        list(search_terms),
-        max_workers=search_workers,
-        on_error=lambda term, exc: emit(
-            f"[-] Pexels search failed for '{term}': {exc}", "warning"
+
+    # Flatten (provider, term) so all queries fan out across one thread pool.
+    queries = [
+        (provider, term) for term in search_terms for provider in providers
+    ]
+
+    def _query_one(pair):
+        provider, term = pair
+        return provider.search(term, count=it, min_duration=min_dur)
+
+    raw_results = parallel_map(
+        _query_one,
+        queries,
+        max_workers=max(search_workers, len(providers)),
+        on_error=lambda pair, exc: emit(
+            f"[-] {pair[0].name} search failed for '{pair[1]}': {exc}",
+            "warning",
         ),
         is_cancelled=is_cancelled,
     )
 
+    # Group matches by term (preserve provider order from STOCK_SOURCES).
+    matches_by_term: dict[str, list] = {term: [] for term in search_terms}
+    for (_provider, term), matches in zip(queries, raw_results):
+        if matches:
+            matches_by_term[term].extend(matches)
+
     video_urls: list[str] = []
-    for found_urls in search_results:
-        if not found_urls:
-            continue
-        for url in found_urls:
-            if url not in video_urls:
-                video_urls.append(url)
+    for term in search_terms:
+        for match in matches_by_term.get(term, []):
+            if match.url not in video_urls:
+                video_urls.append(match.url)
                 break
 
     if not video_urls:

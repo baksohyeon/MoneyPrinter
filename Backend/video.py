@@ -24,24 +24,34 @@ FRAME_EPSILON = 1 / 120
 
 
 def save_video(video_url: str, directory: str = str(TEMP_DIR)) -> str:
-    """
-    Saves a video from a given URL and returns the path to the video.
+    """Saves a video from a URL and returns its on-disk path.
 
-    Args:
-        video_url (str): The URL of the video to save.
-        directory (str): The path of the temporary directory to save the video to
-
-    Returns:
-        str: The path to the saved video.
+    Cache-aware: if the URL is already in the clip cache (Backend/cache.py),
+    return that cached path directly — moviepy reads it the same as a fresh
+    download. On a cache miss, download to a TEMP_DIR scratch file, then
+    promote into the cache and return the cache path.
     """
+    from cache import get_clip, store_clip
+
+    cached = get_clip(video_url)
+    if cached is not None:
+        log(f"[+] Cache hit: {video_url[:80]}...", "info")
+        return str(cached)
+
     destination = Path(directory).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
     video_id = uuid.uuid4()
-    video_path = destination / f"{video_id}.mp4"
-    with open(video_path, "wb") as f:
-        f.write(requests.get(video_url).content)
+    scratch_path = destination / f"{video_id}.mp4"
+    with open(scratch_path, "wb") as f:
+        f.write(requests.get(video_url, timeout=60).content)
 
-    return str(video_path)
+    try:
+        cached_path = store_clip(video_url, str(scratch_path))
+        scratch_path.unlink(missing_ok=True)
+        return str(cached_path)
+    except Exception as exc:
+        log(f"[-] Could not promote download to cache: {exc}", "warning")
+        return str(scratch_path)
 
 
 def __generate_subtitles_assemblyai(audio_path: str, voice: str) -> str:
