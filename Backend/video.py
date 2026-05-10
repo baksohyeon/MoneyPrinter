@@ -4,7 +4,6 @@ import uuid
 
 import requests
 import srt_equalizer
-import assemblyai as aai
 
 from typing import List, Optional
 from pathlib import Path
@@ -19,7 +18,6 @@ from utils import ENV_FILE, TEMP_DIR, SUBTITLES_DIR, FONTS_DIR, get_ffmpeg_path
 
 load_dotenv(ENV_FILE)
 
-ASSEMBLY_AI_API_KEY = os.getenv("ASSEMBLY_AI_API_KEY")
 FRAME_EPSILON = 1 / 120
 
 
@@ -54,116 +52,38 @@ def save_video(video_url: str, directory: str = str(TEMP_DIR)) -> str:
         return str(scratch_path)
 
 
-def __generate_subtitles_assemblyai(audio_path: str, voice: str) -> str:
-    """
-    Generates subtitles from a given audio file and returns the path to the subtitles.
-
-    Args:
-        audio_path (str): The path to the audio file to generate subtitles from.
-
-    Returns:
-        str: The generated subtitles
-    """
-
-    language_mapping = {
-        "br": "pt",
-        "id": "en",  # AssemblyAI doesn't have Indonesian
-        "jp": "ja",
-        "kr": "ko",
-    }
-
-    if voice in language_mapping:
-        lang_code = language_mapping[voice]
-    else:
-        lang_code = voice
-
-    aai.settings.api_key = ASSEMBLY_AI_API_KEY
-    config = aai.TranscriptionConfig(language_code=lang_code)
-    transcriber = aai.Transcriber(config=config)
-    transcript = transcriber.transcribe(audio_path)
-    subtitles = transcript.export_subtitles_srt()
-
-    return subtitles
-
-
-def __generate_subtitles_locally(
-    sentences: List[str], audio_clips: List[AudioFileClip]
-) -> str:
-    """
-    Generates subtitles from a given audio file and returns the path to the subtitles.
-
-    Args:
-        sentences (List[str]): all the sentences said out loud in the audio clips
-        audio_clips (List[AudioFileClip]): all the individual audio clips which will make up the final audio track
-    Returns:
-        str: The generated subtitles
-    """
-
-    def convert_to_srt_time_format(total_seconds: float) -> str:
-        # Convert total seconds to the SRT time format: HH:MM:SS,mmm
-        milliseconds_total = int(round(total_seconds * 1000))
-        hours, remainder = divmod(milliseconds_total, 3_600_000)
-        minutes, remainder = divmod(remainder, 60_000)
-        seconds, milliseconds = divmod(remainder, 1000)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
-
-    start_time = 0
-    subtitles = []
-
-    for i, (sentence, audio_clip) in enumerate(zip(sentences, audio_clips), start=1):
-        duration = audio_clip.duration
-        end_time = start_time + duration
-
-        # Format: subtitle index, start time --> end time, sentence
-        subtitle_entry = f"{i}\n{convert_to_srt_time_format(start_time)} --> {convert_to_srt_time_format(end_time)}\n{sentence}\n"
-        subtitles.append(subtitle_entry)
-
-        start_time += duration  # Update start time for the next subtitle
-
-    return "\n".join(subtitles)
-
-
 def generate_subtitles(
     audio_path: str, sentences: List[str], audio_clips: List[AudioFileClip], voice: str
 ) -> str:
+    """Resolve a SubtitlesProvider via factory and write its SRT to disk.
+
+    Selection priority (no override):
+      1. AssemblyAI if ASSEMBLY_AI_API_KEY is set (preserves prior behavior)
+      2. mlx-whisper if Mac fast-path + package available
+      3. Local sentence-level timing fallback
+    Override via SUBTITLES_PROVIDER env or job payload.
     """
-    Generates subtitles from a given audio file and returns the path to the subtitles.
+    from providers.subtitles import get_subtitles_provider
 
-    Args:
-        audio_path (str): The path to the audio file to generate subtitles from.
-        sentences (List[str]): all the sentences said out loud in the audio clips
-        audio_clips (List[AudioFileClip]): all the individual audio clips which will make up the final audio track
+    provider = get_subtitles_provider()
+    log(f"[+] Creating subtitles via {provider.name}", "info")
 
-    Returns:
-        str: The path to the generated subtitles.
-    """
+    subtitles = provider.transcribe(
+        audio_path,
+        sentences=sentences,
+        audio_clips=audio_clips,
+        voice=voice,
+    )
 
-    def equalize_subtitles(srt_path: str, max_chars: int = 10) -> None:
-        # Equalize subtitles
-        srt_equalizer.equalize_srt_file(srt_path, srt_path, max_chars)
-
-    # Save subtitles
     SUBTITLES_DIR.mkdir(parents=True, exist_ok=True)
     subtitles_path = SUBTITLES_DIR / f"{uuid.uuid4()}.srt"
-
-    if ASSEMBLY_AI_API_KEY is not None and ASSEMBLY_AI_API_KEY != "":
-        log("[+] Creating subtitles using AssemblyAI", "info")
-        subtitles = __generate_subtitles_assemblyai(audio_path, voice)
-    else:
-        log("[+] Creating subtitles locally", "info")
-        subtitles = __generate_subtitles_locally(sentences, audio_clips)
-        # print(colored("[-] Local subtitle generation has been disabled for the time being.", "red"))
-        # print(colored("[-] Exiting.", "red"))
-        # sys.exit(1)
-
     with open(subtitles_path, "w", encoding="utf-8") as file:
         file.write(subtitles)
 
-    # Equalize subtitles
-    equalize_subtitles(str(subtitles_path))
+    # Re-flow: cap each line at 10 chars so subtitles read snappy on shorts.
+    srt_equalizer.equalize_srt_file(str(subtitles_path), str(subtitles_path), 10)
 
     log("[+] Subtitles generated.", "success")
-
     return str(subtitles_path)
 
 
