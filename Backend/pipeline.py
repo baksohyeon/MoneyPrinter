@@ -14,6 +14,7 @@ from providers.imagegen import get_imagegen_provider
 from providers.stock import get_stock_providers
 from tiktokvoice import tts
 from utils import (
+    ASSETS_DIR,
     BASE_DIR,
     PROJECT_ROOT,
     TEMP_DIR,
@@ -197,6 +198,34 @@ def run_generation_pipeline(
     # Mix Ken-Burns assets in with the downloaded paths — combine_videos
     # accepts both string paths and KenBurnsAsset instances.
     video_paths = video_paths + imagegen_assets
+
+    # Auto-prepend assets/intro.{png,jpg,jpeg,webp} if present. Used to drop
+    # a meme PNG / infographic at the start of the video. Motion = "fit"
+    # so the entire image is visible (no crop) and load-bearing text on
+    # the edges survives.
+    intro_image = next(
+        (
+            ASSETS_DIR / f"intro.{ext}"
+            for ext in ("png", "jpg", "jpeg", "webp")
+            if (ASSETS_DIR / f"intro.{ext}").exists()
+        ),
+        None,
+    )
+    if intro_image is not None:
+        try:
+            intro_duration = float(os.getenv("INTRO_DURATION", "3.0"))
+        except ValueError:
+            intro_duration = 3.0
+        intro_asset = KenBurnsAsset(
+            image_path=str(intro_image),
+            duration=intro_duration,
+            motion="fit",
+        )
+        video_paths = [intro_asset] + video_paths
+        emit(
+            f"[+] Using intro asset {intro_image.name} ({intro_duration:.1f}s, motion=fit)",
+            "info",
+        )
 
     emit("[+] Videos downloaded!", "success")
     emit("[+] Script generated!", "success")

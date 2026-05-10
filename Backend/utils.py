@@ -18,6 +18,7 @@ TEMP_DIR = PROJECT_ROOT / "temp"
 SUBTITLES_DIR = PROJECT_ROOT / "subtitles"
 SONGS_DIR = PROJECT_ROOT / "Songs"
 FONTS_DIR = PROJECT_ROOT / "fonts"
+ASSETS_DIR = PROJECT_ROOT / "assets"
 ENV_FILE = PROJECT_ROOT / ".env"
 
 # Configure logging

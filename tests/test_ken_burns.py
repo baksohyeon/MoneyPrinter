@@ -60,3 +60,19 @@ def test_ken_burns_asset_defaults():
     a = KenBurnsAsset(image_path="/tmp/x.png")
     assert a.duration == 5.0
     assert a.motion == "zoom_in"
+
+
+def test_image_to_clip_fit_motion_preserves_full_image(tmp_path):
+    """fit motion must NOT zoom (frame at t=0 == frame at t=duration).
+    This protects intro/meme images where edge text would be cropped by
+    a normal Ken-Burns zoom. White letterbox is the cost.
+    """
+    img = _make_jpg(tmp_path / "src.jpg", 1000, 1100)
+    clip = image_to_clip(str(img), duration=2.0, motion="fit")
+    try:
+        assert clip.size == (1080, 1920)
+        f0 = clip.get_frame(0.0)
+        f1 = clip.get_frame(1.9)
+        assert (f0 == f1).all(), "fit motion must produce static frames"
+    finally:
+        clip.close()
