@@ -40,7 +40,12 @@ class AssemblyAIProvider(SubtitlesProvider):
 
         lang_code = _LANGUAGE_MAPPING.get(voice or "", voice or "en")
         aai.settings.api_key = os.getenv("ASSEMBLY_AI_API_KEY", "")
-        config = aai.TranscriptionConfig(language_code=lang_code)
+        # API requires the plural `speech_models` list with current model names.
+        speech_model = os.getenv("ASSEMBLY_AI_SPEECH_MODEL", "universal-2")
+        config = aai.TranscriptionConfig(
+            language_code=lang_code,
+            speech_models=[speech_model],
+        )
         transcriber = aai.Transcriber(config=config)
         transcript = transcriber.transcribe(audio_path)
         return transcript.export_subtitles_srt()

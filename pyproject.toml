@@ -18,7 +18,7 @@ dependencies = [
     "srt-equalizer==0.1.8",
     "platformdirs==4.1.0",
     "undetected-chromedriver",
-    "assemblyai",
+    "assemblyai>=0.64.0",
     "brotli",
     "google-api-python-client",
     "oauth2client",
