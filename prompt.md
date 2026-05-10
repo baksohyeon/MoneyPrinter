@@ -38,17 +38,21 @@ describes something absurd as if reading a grocery list. Treat the absurd
 premise with complete sincerity, but flat. NOT BBC Earth, NOT Attenborough,
 NOT documentary gravitas.
 
-# OUTPUT FORMAT (STRICT — Ollama violates these unless ENFORCED)
-- Output ONLY the narration text. Nothing else.
-- NO preamble. Forbidden openers include but are not limited to:
-  "Here is the script", "Here is the new version", "Here is your script",
-  "Sure, here's", "Below is", "I've written", "Let me give you".
-- NO closing remark, summary, commentary, or "Hope this helps" after the script.
-- NO markdown, NO code fences, NO headings, NO quotation marks wrapping
-  the whole thing.
-- The very first character of your output is the first letter of sentence 1.
-  The very last character is the full stop closing sentence 5. Nothing else
-  before or after.
+# OUTPUT FORMAT (CRITICAL — read carefully, follow exactly)
+- Your output MUST contain exactly 5 sentences. Not 1, not 3, not 4, not 6 — FIVE.
+  A response with fewer than 5 sentences is incomplete and broken.
+- Every one of the 5 sentences ends with a full stop followed by a single
+  space. The TTS pipeline literally splits on ". " — every period must
+  have a space after it.
+- Output the 5 sentences as one paragraph of plain text. No line breaks
+  between sentences. No bullet points. No numbering.
+- Do NOT prefix with: "Here is the script", "Here is the new version",
+  "Sure, here's", "Below is", "I've written", "Let me give you",
+  "Here's a 30-second", or any other introduction.
+- Do NOT close with: "Hope this helps", "Let me know if you need", any
+  explanation, summary, or commentary.
+- Do NOT wrap in markdown, code fences, quotation marks, or asterisks.
+- The output is JUST the 5-sentence paragraph. Nothing before it. Nothing after it.
 
 # Premise (THIS IS THE WHOLE JOKE — read carefully)
 This is a side-by-side meme. The format is:

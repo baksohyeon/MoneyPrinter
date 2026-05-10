@@ -327,25 +327,92 @@ def generate_metadata(
         Tuple[str, str, List[str]]: The title, description, and keywords for the video.
     """
 
-    # Build prompt for title
-    title_prompt = f"""  
-    Generate a catchy and SEO-friendly title for a YouTube shorts video about {video_subject}.  
-    """
+    # Build prompt for title. Smaller models (llama3.1:8b) love adding
+    # "Here are a few options:" preambles + numbered lists. Force a single
+    # plain string with no markdown.
+    title_prompt = (
+        f"Write ONE catchy SEO-friendly YouTube Shorts title about {video_subject}.\n"
+        "Output exactly one title as a plain string. No preamble, no quotes, "
+        "no asterisks, no numbering, no 'Here are options', no alternatives. "
+        "Just the title, max 70 characters, ending with no punctuation."
+    )
 
     # Generate title
-    title = generate_response(title_prompt, ai_model).strip()
+    title = _clean_metadata_line(generate_response(title_prompt, ai_model))
 
     # Build prompt for description
-    description_prompt = f"""  
-    Write a brief and engaging description for a YouTube shorts video about {video_subject}.  
-    The video is based on the following script:  
-    {script}  
-    """
+    description_prompt = (
+        f"Write ONE 1-2 sentence YouTube Shorts description about {video_subject}.\n"
+        "The video script is:\n"
+        f"{script}\n\n"
+        "Output exactly one description as a plain string. No preamble, no quotes, "
+        "no asterisks, no markdown, no 'Here is the description', no alternatives. "
+        "Just the description, 1-2 sentences max."
+    )
 
     # Generate description
-    description = generate_response(description_prompt, ai_model).strip()
+    description = _clean_metadata_line(generate_response(description_prompt, ai_model))
 
     # Generate keywords
     keywords = get_search_terms(video_subject, 6, script, ai_model)
 
     return title, description, keywords
+
+
+_PREAMBLE_PATTERNS = [
+    "here are a few options",
+    "here are some options",
+    "here is the title",
+    "here is the description",
+    "here's the title",
+    "here's the description",
+    "here's a brief",
+    "here's a catchy",
+    "here is a brief",
+    "sure, here",
+    "i've written",
+    "i'd suggest",
+    "let me give you",
+    "below is",
+]
+
+
+def _clean_metadata_line(raw: str) -> str:
+    """Pull a clean single-line title/description out of Ollama output.
+
+    Handles the patterns small models keep emitting:
+      - "Here are a few options:" preambles
+      - Numbered alternative lists ("1. **\"Title\"** (6 words)")
+      - Markdown emphasis (** _ ` ")
+      - Trailing parentheticals (" (9 words, keyword rich)")
+    Falls back to the raw input only if every line was a pure preamble.
+    """
+    import re
+
+    if not raw:
+        return ""
+
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+
+    for ln in lines:
+        low = ln.lower()
+        if any(low.startswith(p) for p in _PREAMBLE_PATTERNS):
+            continue
+
+        # Strip leading "1. ", "2. ", "* ", "- " markers.
+        ln = re.sub(r"^(\d+\.\s+|[*-]\s+)", "", ln)
+        # Drop trailing parenthetical like "(6 words, keyword rich)".
+        ln = re.sub(r"\s*\([^)]*\)\s*$", "", ln)
+
+        # Prefer content inside **"..."**, then **...**, then "...".
+        for pattern in (r'\*\*"([^"]+)"\*\*', r"\*\*([^*]+)\*\*", r'"([^"]+)"'):
+            m = re.search(pattern, ln)
+            if m:
+                return m.group(1).strip(' "*_`')
+
+        # No quoted/bolded content — use the line raw, sans surrounding markdown.
+        ln = ln.strip(' *_`"\'')
+        if ln:
+            return ln
+
+    return raw.strip()
