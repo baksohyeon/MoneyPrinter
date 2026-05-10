@@ -88,20 +88,21 @@ def generate_subtitles(
 
 
 def combine_videos(
-    video_paths: List[str], max_duration: int, max_clip_duration: int, threads: int
-) -> str:
-    """
-    Combines a list of videos into one video and returns the path to the combined video.
+    video_paths,
+    max_duration: int,
+    max_clip_duration: int,
+    threads: int,
+):
+    """Concatenate a list of assets into a single 1080x1920 video.
 
-    Args:
-        video_paths (List): A list of paths to the videos to combine.
-        max_duration (int): The maximum duration of the combined video.
-        max_clip_duration (int): The maximum duration of each clip.
-        threads (int): The number of threads to use for the video processing.
-
-    Returns:
-        str: The path to the combined video.
+    ``video_paths`` is heterogeneous: each element is either a path string
+    (treated as a stock video file) or a KenBurnsAsset (a still that the
+    Ken-Burns helper turns into an animated clip on the fly). This keeps the
+    pipeline backward-compatible while letting MFLUX-generated images sit
+    alongside Pexels footage.
     """
+    from effects.ken_burns import KenBurnsAsset, image_to_clip
+
     video_id = uuid.uuid4()
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     combined_video_path = TEMP_DIR / f"{video_id}.mp4"
@@ -112,7 +113,6 @@ def combine_videos(
     max_duration = float(max_duration)
     max_clip_duration = float(max_clip_duration)
 
-    # Required duration of each clip
     req_dur = max_duration / len(video_paths)
 
     log("[+] Combining videos...", "info")
@@ -120,15 +120,37 @@ def combine_videos(
 
     clips = []
     tot_dur = 0
-    # Add downloaded clips over and over until the duration of the audio (max_duration) has been reached
     while tot_dur < (max_duration - FRAME_EPSILON):
         progressed = False
-        for video_path in video_paths:
+        for asset in video_paths:
             remaining = max_duration - tot_dur
             if remaining <= FRAME_EPSILON:
                 break
 
-            clip = VideoFileClip(video_path)
+            if isinstance(asset, KenBurnsAsset):
+                max_safe_source_duration = float(asset.duration)
+                target_duration = min(
+                    req_dur,
+                    max_clip_duration,
+                    remaining,
+                    max_safe_source_duration,
+                )
+                if target_duration <= 0:
+                    continue
+                clip = image_to_clip(
+                    asset.image_path,
+                    target_duration,
+                    motion=asset.motion,
+                    target_size=(1080, 1920),
+                    fps=30,
+                )
+                clips.append(clip)
+                tot_dur += clip.duration
+                progressed = True
+                continue
+
+            # Stock video path branch.
+            clip = VideoFileClip(str(asset))
             clip = clip.without_audio()
             max_safe_source_duration = clip.duration - FRAME_EPSILON
             if max_safe_source_duration <= 0:
@@ -146,8 +168,7 @@ def combine_videos(
                 clip = clip.subclipped(0, target_duration)
             clip = clip.with_fps(30)
 
-            # Not all videos are same size,
-            # so we need to resize them
+            # Center-crop to 9:16 then resize.
             if round((clip.w / clip.h), 4) < 0.5625:
                 clip = clip.cropped(
                     width=clip.w,

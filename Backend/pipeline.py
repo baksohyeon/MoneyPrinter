@@ -6,9 +6,11 @@ from apiclient.errors import HttpError
 from moviepy import AudioFileClip, concatenate_audioclips
 from uuid import uuid4
 
+from effects.ken_burns import KenBurnsAsset
 from gpt import generate_metadata, generate_script, get_search_terms
 from logstream import log
 from parallel import parallel_map
+from providers.imagegen import get_imagegen_provider
 from providers.stock import get_stock_providers
 from tiktokvoice import tts
 from utils import (
@@ -125,14 +127,51 @@ def run_generation_pipeline(
             matches_by_term[term].extend(matches)
 
     video_urls: list[str] = []
+    used_terms: list[str] = []
+    unmatched_terms: list[str] = []
     for term in search_terms:
+        picked = False
         for match in matches_by_term.get(term, []):
             if match.url not in video_urls:
                 video_urls.append(match.url)
+                used_terms.append(term)
+                picked = True
                 break
+        if not picked:
+            unmatched_terms.append(term)
 
-    if not video_urls:
-        raise RuntimeError("No videos found to download.")
+    # Optional: ask the imagegen provider to fill stock gaps with AI B-roll.
+    imagegen_assets: list[KenBurnsAsset] = []
+    imagegen = get_imagegen_provider()
+    if imagegen and unmatched_terms:
+        emit(
+            f"[+] {imagegen.name}: generating {len(unmatched_terms)} B-roll image(s) for unmatched terms",
+            "info",
+        )
+        for term in unmatched_terms:
+            guard_cancelled()
+            try:
+                img_path = str(TEMP_DIR / f"{uuid4()}_imagegen.png")
+                imagegen.generate(term, img_path)
+                imagegen_assets.append(
+                    KenBurnsAsset(
+                        image_path=img_path,
+                        duration=5.0,
+                        motion="zoom_in",
+                    )
+                )
+                emit(f"   imagegen ok: '{term}' → {img_path}", "info")
+            except Exception as exc:
+                emit(f"[-] imagegen failed for '{term}': {exc}", "warning")
+    elif unmatched_terms:
+        emit(
+            f"[!] {len(unmatched_terms)} term(s) had no stock match; "
+            f"set IMAGEGEN_ENABLED=true to fill with AI images.",
+            "warning",
+        )
+
+    if not video_urls and not imagegen_assets:
+        raise RuntimeError("No videos found to download and imagegen disabled.")
 
     guard_cancelled()
     emit(f"[+] Downloading {len(video_urls)} videos...", "info")
@@ -148,6 +187,9 @@ def run_generation_pipeline(
         is_cancelled=is_cancelled,
     )
     video_paths = [path for path in download_results if path]
+    # Mix Ken-Burns assets in with the downloaded paths — combine_videos
+    # accepts both string paths and KenBurnsAsset instances.
+    video_paths = video_paths + imagegen_assets
 
     emit("[+] Videos downloaded!", "success")
     emit("[+] Script generated!", "success")

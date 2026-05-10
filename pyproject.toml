@@ -29,6 +29,10 @@ dependencies = [
 [project.optional-dependencies]
 # Optional Apple Silicon / MLX accelerated providers. Install with:
 #   uv sync --extra mac-fast
+# Note: mflux is intentionally excluded here because its transitive deps
+# (pillow>=10, requests>=2.32) conflict with this project's pinned versions.
+# Install it separately when you want AI B-roll:
+#   uv pip install mflux
 mac-fast = [
     "mlx-whisper",
 ]
