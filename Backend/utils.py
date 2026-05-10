@@ -2,8 +2,11 @@ import os
 import sys
 import random
 import logging
+import platform
 import shutil
+import subprocess
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 from termcolor import colored
@@ -145,22 +148,60 @@ def check_env_vars() -> None:
             sys.exit(1)  # Aborts the program
 
         imagemagick_binary = resolve_imagemagick_binary()
-        if not imagemagick_binary:
-            logger.error(
+        if imagemagick_binary:
+            os.environ["IMAGEMAGICK_BINARY"] = imagemagick_binary
+        else:
+            logger.warning(
                 colored(
-                    "IMAGEMAGICK_BINARY is not set and no ImageMagick executable was detected in PATH.",
-                    "red",
-                )
-            )
-            logger.error(
-                colored(
-                    "Set IMAGEMAGICK_BINARY in .env or install ImageMagick and add it to PATH.",
+                    "ImageMagick not detected. Subtitle rendering uses ffmpeg+libass; "
+                    "ImageMagick is only required for legacy MoviePy text rendering.",
                     "yellow",
                 )
             )
-            sys.exit(1)
-
-        os.environ["IMAGEMAGICK_BINARY"] = imagemagick_binary
     except Exception as e:
         logger.error(f"Error occurred while checking environment variables: {str(e)}")
         sys.exit(1)  # Aborts the program if an unexpected error occurs
+
+
+@lru_cache(maxsize=1)
+def get_ffmpeg_path() -> str:
+    """Resolve ffmpeg binary path. Prefer system ffmpeg, fall back to imageio_ffmpeg."""
+    system_path = shutil.which("ffmpeg")
+    if system_path:
+        return system_path
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:  # pragma: no cover - exotic envs
+        logger.warning(f"Could not resolve ffmpeg via imageio_ffmpeg: {exc}")
+        return "ffmpeg"
+
+
+@lru_cache(maxsize=16)
+def probe_ffmpeg_encoder(name: str) -> bool:
+    """Return True if the given encoder name is reported by `ffmpeg -encoders`."""
+    try:
+        result = subprocess.run(
+            [get_ffmpeg_path(), "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"Could not probe ffmpeg encoders: {exc}")
+        return False
+
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == name:
+            return True
+    return False
+
+
+@lru_cache(maxsize=1)
+def is_mac_fast_path_available() -> bool:
+    """True on Apple Silicon macOS, where VideoToolbox / MLX provide GPU acceleration."""
+    if platform.system() != "Darwin":
+        return False
+    return platform.machine() in ("arm64", "aarch64")

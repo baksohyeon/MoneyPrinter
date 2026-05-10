@@ -1,23 +1,21 @@
 import os
+import subprocess
 import uuid
 
 import requests
 import srt_equalizer
 import assemblyai as aai
 
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 from moviepy import (
     AudioFileClip,
-    CompositeVideoClip,
-    TextClip,
     VideoFileClip,
     concatenate_videoclips,
 )
 from dotenv import load_dotenv
 from logstream import log
-from moviepy.video.tools.subtitles import SubtitlesClip
-from utils import ENV_FILE, TEMP_DIR, SUBTITLES_DIR, FONTS_DIR
+from utils import ENV_FILE, TEMP_DIR, SUBTITLES_DIR, FONTS_DIR, get_ffmpeg_path
 
 load_dotenv(ENV_FILE)
 
@@ -248,14 +246,30 @@ def combine_videos(
 
     final_clip = concatenate_videoclips(clips, method="compose")
     final_clip = final_clip.with_fps(30).with_duration(max_duration)
+
+    # Intermediate file gets re-encoded by burn_and_mix(), so prioritize speed.
+    # On Apple Silicon, use VideoToolbox; elsewhere, libx264 ultrafast.
+    from providers.encoder import get_encoder
+
+    encoder = get_encoder()
+    if encoder.name == "videotoolbox":
+        write_kwargs = {
+            "codec": "h264_videotoolbox",
+            "bitrate": "20M",
+        }
+    else:
+        write_kwargs = {
+            "codec": "libx264",
+            "preset": "ultrafast",
+        }
+
     try:
         final_clip.write_videofile(
             str(combined_video_path),
             threads=threads,
             fps=30,
-            codec="libx264",
-            preset="medium",
             audio=False,
+            **write_kwargs,
         )
     finally:
         final_clip.close()
@@ -263,6 +277,109 @@ def combine_videos(
             clip.close()
 
     return str(combined_video_path)
+
+
+def burn_and_mix(
+    combined_video_path: str,
+    audio_path: str,
+    subtitles_path: str,
+    *,
+    output_path: str,
+    music_path: Optional[str] = None,
+    music_volume: float = 0.1,
+    threads: int = 2,
+    subtitles_position: str = "center,bottom",
+    text_color: str = "#FFFF00",
+    target_bitrate: Optional[str] = None,
+    encoder_override: Optional[str] = None,
+) -> str:
+    """Single-pass ffmpeg composition: burn subtitles via libass, mix TTS (and
+    optional looped background music), encode with the selected encoder.
+
+    Replaces the old MoviePy SubtitlesClip + CompositeVideoClip path, eliminating
+    per-frame ImageMagick TextClip calls and collapsing 2-3 encodes into 1.
+    """
+    from providers.encoder import get_encoder
+    from providers.encoder.base import (
+        SubtitleStyle,
+        build_subtitles_filter,
+        hex_to_ass_color,
+        parse_subtitle_position,
+    )
+
+    encoder = get_encoder(encoder_override)
+    ffmpeg_bin = get_ffmpeg_path()
+
+    style = SubtitleStyle(
+        font_name="Bold",
+        font_size=22,
+        primary_color=hex_to_ass_color(text_color),
+        outline_color="&H00000000&",
+        outline=4,
+        alignment=parse_subtitle_position(subtitles_position),
+    )
+    fonts_dir = str(FONTS_DIR.resolve())
+    sub_filter = build_subtitles_filter(subtitles_path, fonts_dir, style)
+
+    target_bitrate = target_bitrate or os.getenv("TARGET_BITRATE", "8M")
+
+    cmd: List[str] = [
+        ffmpeg_bin,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(combined_video_path),
+        "-i",
+        str(audio_path),
+    ]
+
+    if music_path:
+        cmd += ["-stream_loop", "-1", "-i", str(music_path)]
+        filter_complex = (
+            f"[0:v]{sub_filter}[v];"
+            f"[1:a][2:a]amix=inputs=2:weights='1 {music_volume}':duration=first[a]"
+        )
+        cmd += [
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+        ]
+    else:
+        filter_complex = f"[0:v]{sub_filter}[v]"
+        cmd += [
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "1:a:0",
+        ]
+
+    cmd += encoder.video_codec_args(target_bitrate, threads)
+    cmd += encoder.audio_codec_args("192k")
+    cmd += ["-shortest", str(output_path)]
+
+    log(
+        f"[+] Encoding via {encoder.name} (bitrate={target_bitrate}, music={'on' if music_path else 'off'})",
+        "info",
+    )
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        log(
+            f"[-] ffmpeg failed (exit {result.returncode}): {result.stderr[:1500]}",
+            "error",
+        )
+        raise RuntimeError(
+            f"burn_and_mix: ffmpeg exited {result.returncode}. "
+            f"Last stderr: {result.stderr[-500:]}"
+        )
+
+    return str(output_path)
 
 
 def generate_video(
@@ -273,73 +390,19 @@ def generate_video(
     subtitles_position: str,
     text_color: str,
 ) -> str:
+    """Backward-compat wrapper: burn subtitles + add TTS audio to TEMP_DIR/output.mp4.
+
+    Music is no longer applied here — the pipeline now calls burn_and_mix()
+    directly when use_music is set, in a single ffmpeg pass.
     """
-    This function creates the final video, with subtitles and audio.
-
-    Args:
-        combined_video_path (str): The path to the combined video.
-        tts_path (str): The path to the text-to-speech audio.
-        subtitles_path (str): The path to the subtitles.
-        threads (int): The number of threads to use for the video processing.
-        subtitles_position (str): The position of the subtitles.
-
-    Returns:
-        str: The path to the final video.
-    """
-    # Make a generator that returns a TextClip when called with consecutive
-    font_path = str((FONTS_DIR / "bold_font.ttf").resolve())
-    generator = lambda txt: TextClip(
-        font=font_path,
-        text=txt,
-        font_size=100,
-        color=text_color,
-        stroke_color="black",
-        stroke_width=5,
-    )
-
-    # Split the subtitles position into horizontal and vertical
-    horizontal_subtitles_position, vertical_subtitles_position = (
-        subtitles_position.split(",")
-    )
-
-    # Burn the subtitles into the video
-    subtitles = SubtitlesClip(subtitles_path, make_textclip=generator)
-    subtitle_vertical_position = vertical_subtitles_position
-    if vertical_subtitles_position == "top":
-        subtitle_vertical_position = 80
-
-    base_video = VideoFileClip(str(combined_video_path))
-    audio = AudioFileClip(tts_path)
-    target_duration = min(base_video.duration, audio.duration)
-
-    result = CompositeVideoClip(
-        [
-            base_video.subclipped(0, target_duration),
-            subtitles.with_position(
-                (horizontal_subtitles_position, subtitle_vertical_position)
-            ).with_duration(target_duration),
-        ]
-    )
-
-    # Clamp audio/video to exactly the same duration to avoid end-frame overreads.
-    result = result.with_audio(audio.subclipped(0, target_duration)).with_duration(
-        target_duration
-    )
-
     output_path = TEMP_DIR / "output.mp4"
-    try:
-        result.write_videofile(
-            str(output_path),
-            threads=threads or 2,
-            fps=30,
-            codec="libx264",
-            audio_codec="aac",
-            preset="medium",
-        )
-    finally:
-        result.close()
-        subtitles.close()
-        audio.close()
-        base_video.close()
-
+    burn_and_mix(
+        combined_video_path,
+        tts_path,
+        subtitles_path,
+        output_path=str(output_path),
+        threads=threads or 2,
+        subtitles_position=subtitles_position or "center,bottom",
+        text_color=text_color or "#FFFF00",
+    )
     return "output.mp4"

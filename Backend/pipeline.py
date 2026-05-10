@@ -3,28 +3,21 @@ import shutil
 import subprocess
 
 from apiclient.errors import HttpError
-from moviepy import (
-    AudioFileClip,
-    CompositeAudioClip,
-    VideoFileClip,
-    afx,
-    concatenate_audioclips,
-)
+from moviepy import AudioFileClip, concatenate_audioclips
 from uuid import uuid4
 
 from gpt import generate_metadata, generate_script, get_search_terms
 from logstream import log
+from parallel import parallel_map
 from search import search_for_stock_videos
 from tiktokvoice import tts
 from utils import (
     BASE_DIR,
     PROJECT_ROOT,
-    SONGS_DIR,
-    SUBTITLES_DIR,
     TEMP_DIR,
     choose_random_song,
 )
-from video import combine_videos, generate_subtitles, generate_video, save_video
+from video import burn_and_mix, combine_videos, generate_subtitles, save_video
 from youtube import upload_video
 
 
@@ -36,7 +29,7 @@ def run_generation_pipeline(
     data: dict,
     is_cancelled,
     on_log,
-    amount_of_stock_videos: int = 5,
+    amount_of_stock_videos: int = 10,
 ) -> str:
     def emit(message: str, level: str = "info") -> None:
         log(message, level)
@@ -87,15 +80,27 @@ def run_generation_pipeline(
         data["videoSubject"], amount_of_stock_videos, script, ai_model
     )
 
-    video_urls = []
     it = 15
-    min_dur = 10
+    # Pexels filter: niche topics have few long clips; 3s helps. Override: PEXELS_MIN_VIDEO_DURATION_SECONDS
+    min_dur = int(os.getenv("PEXELS_MIN_VIDEO_DURATION_SECONDS", "3"))
+    pexels_api_key = os.getenv("PEXELS_API_KEY")
 
-    for search_term in search_terms:
-        guard_cancelled()
-        found_urls = search_for_stock_videos(
-            search_term, os.getenv("PEXELS_API_KEY"), it, min_dur
-        )
+    guard_cancelled()
+    search_workers = int(os.getenv("PARALLEL_SEARCH_WORKERS", "8"))
+    search_results = parallel_map(
+        lambda term: search_for_stock_videos(term, pexels_api_key, it, min_dur),
+        list(search_terms),
+        max_workers=search_workers,
+        on_error=lambda term, exc: emit(
+            f"[-] Pexels search failed for '{term}': {exc}", "warning"
+        ),
+        is_cancelled=is_cancelled,
+    )
+
+    video_urls: list[str] = []
+    for found_urls in search_results:
+        if not found_urls:
+            continue
         for url in found_urls:
             if url not in video_urls:
                 video_urls.append(url)
@@ -104,16 +109,20 @@ def run_generation_pipeline(
     if not video_urls:
         raise RuntimeError("No videos found to download.")
 
-    video_paths = []
+    guard_cancelled()
     emit(f"[+] Downloading {len(video_urls)} videos...", "info")
 
-    for video_url in video_urls:
-        guard_cancelled()
-        try:
-            saved_video_path = save_video(video_url)
-            video_paths.append(saved_video_path)
-        except Exception:
-            emit(f"[-] Could not download video: {video_url}", "error")
+    download_workers = int(os.getenv("PARALLEL_DOWNLOAD_WORKERS", "8"))
+    download_results = parallel_map(
+        save_video,
+        video_urls,
+        max_workers=download_workers,
+        on_error=lambda url, exc: emit(
+            f"[-] Could not download video: {url} ({exc})", "error"
+        ),
+        is_cancelled=is_cancelled,
+    )
+    video_paths = [path for path in download_results if path]
 
     emit("[+] Videos downloaded!", "success")
     emit("[+] Script generated!", "success")
@@ -122,14 +131,35 @@ def run_generation_pipeline(
 
     sentences = script.split(". ")
     sentences = list(filter(lambda x: x != "", sentences))
-    paths = []
 
-    for sentence in sentences:
-        guard_cancelled()
-        current_tts_path = str(TEMP_DIR / f"{uuid4()}.mp3")
-        tts(sentence, voice, filename=current_tts_path)
-        audio_clip = AudioFileClip(current_tts_path)
-        paths.append(audio_clip)
+    tts_paths = [str(TEMP_DIR / f"{uuid4()}.mp3") for _ in sentences]
+    tts_workers = int(os.getenv("PARALLEL_TTS_WORKERS", "4"))
+
+    def _synthesize(idx_sentence):
+        idx, sentence = idx_sentence
+        tts(sentence, voice, filename=tts_paths[idx])
+        return tts_paths[idx]
+
+    parallel_map(
+        _synthesize,
+        list(enumerate(sentences)),
+        max_workers=tts_workers,
+        on_error=lambda pair, exc: emit(
+            f"[-] TTS failed for sentence #{pair[0]}: {exc}", "error"
+        ),
+        is_cancelled=is_cancelled,
+    )
+
+    # Keep sentences and audio clips aligned — drop entries where synth failed.
+    aligned_sentences: list[str] = []
+    paths: list[AudioFileClip] = []
+    for sentence, p in zip(sentences, tts_paths):
+        if os.path.exists(p):
+            aligned_sentences.append(sentence)
+            paths.append(AudioFileClip(p))
+    sentences = aligned_sentences
+    if not paths:
+        raise RuntimeError("All TTS calls failed; cannot continue.")
 
     final_audio = concatenate_audioclips(paths)
     tts_path = str(TEMP_DIR / f"{uuid4()}.mp3")
@@ -164,18 +194,34 @@ def run_generation_pipeline(
     finally:
         temp_audio.close()
 
+    final_video_path = "output.mp4"
+    final_output_path = str(PROJECT_ROOT / final_video_path)
+
+    song_path = None
+    if use_music:
+        song_path = choose_random_song()
+        if not song_path:
+            emit(
+                "[-] Could not find songs in Songs/. Continuing without background music.",
+                "warning",
+            )
+
+    guard_cancelled()
+
     try:
-        final_video_path = generate_video(
+        burn_and_mix(
             combined_video_path,
             tts_path,
             subtitles_path,
-            n_threads or 2,
-            subtitles_position,
-            text_color or "#FFFF00",
+            output_path=final_output_path,
+            music_path=song_path,
+            threads=n_threads or 2,
+            subtitles_position=subtitles_position or "center,bottom",
+            text_color=text_color or "#FFFF00",
         )
     except Exception as err:
         raise RuntimeError(
-            f"Could not render final video. Check subtitle/font/ImageMagick setup. ({err})"
+            f"Could not render final video. ({err})"
         ) from err
 
     title, description, keywords = generate_metadata(
@@ -208,7 +254,7 @@ def run_generation_pipeline(
             video_category_id = "28"
             privacy_status = "private"
             video_metadata = {
-                "video_path": str((TEMP_DIR / final_video_path).resolve()),
+                "video_path": final_output_path,
                 "title": title,
                 "description": description,
                 "category": video_category_id,
@@ -230,120 +276,6 @@ def run_generation_pipeline(
                 emit(
                     f"An HTTP error {err.resp.status} occurred:\n{err.content}", "error"
                 )
-
-    final_output_path = str(PROJECT_ROOT / final_video_path)
-    rendered_video_path = str(TEMP_DIR / final_video_path)
-    render_threads = n_threads or (os.cpu_count() or 2)
-
-    guard_cancelled()
-
-    if use_music:
-        song_path = choose_random_song()
-
-        if not song_path:
-            emit(
-                "[-] Could not find songs in Songs/. Continuing without background music.",
-                "warning",
-            )
-            use_music = False
-
-        if use_music:
-            video_clip = VideoFileClip(rendered_video_path)
-            song_clip = None
-            mixed_audio = None
-            mixed_audio_path = str(TEMP_DIR / f"{uuid4()}_mixed_audio.m4a")
-            try:
-                original_duration = video_clip.duration
-                original_audio = video_clip.audio
-                song_clip = AudioFileClip(song_path).with_fps(44100)
-                song_clip = song_clip.with_effects(
-                    [afx.AudioLoop(duration=original_duration)]
-                )
-                song_clip = song_clip.with_volume_scaled(0.1).with_fps(44100)
-
-                mixed_audio = CompositeAudioClip(
-                    [original_audio, song_clip]
-                ).with_duration(original_duration)
-                mixed_audio.write_audiofile(
-                    mixed_audio_path,
-                    fps=44100,
-                    codec="aac",
-                    bitrate="192k",
-                )
-            finally:
-                video_clip.close()
-                if mixed_audio is not None:
-                    mixed_audio.close()
-                if song_clip is not None:
-                    song_clip.close()
-
-            try:
-                subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-y",
-                        "-i",
-                        rendered_video_path,
-                        "-i",
-                        mixed_audio_path,
-                        "-map",
-                        "0:v:0",
-                        "-map",
-                        "1:a:0",
-                        "-c:v",
-                        "copy",
-                        "-c:a",
-                        "aac",
-                        "-b:a",
-                        "192k",
-                        "-shortest",
-                        final_output_path,
-                    ],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-            except Exception:
-                emit(
-                    "[!] ffmpeg remux failed. Falling back to MoviePy render for music mix.",
-                    "warning",
-                )
-                video_clip = VideoFileClip(rendered_video_path)
-                song_clip = None
-                try:
-                    original_duration = video_clip.duration
-                    original_audio = video_clip.audio
-                    song_clip = AudioFileClip(song_path).with_fps(44100)
-                    song_clip = song_clip.with_effects(
-                        [afx.AudioLoop(duration=original_duration)]
-                    )
-                    song_clip = song_clip.with_volume_scaled(0.1).with_fps(44100)
-                    comp_audio = CompositeAudioClip(
-                        [original_audio, song_clip]
-                    ).with_duration(original_duration)
-                    video_clip = (
-                        video_clip.with_audio(comp_audio)
-                        .with_fps(30)
-                        .with_duration(original_duration)
-                    )
-                    video_clip.write_videofile(
-                        final_output_path,
-                        threads=render_threads,
-                        fps=30,
-                        codec="libx264",
-                        audio_codec="aac",
-                        preset="medium",
-                    )
-                finally:
-                    video_clip.close()
-                    if song_clip is not None:
-                        song_clip.close()
-            finally:
-                if os.path.exists(mixed_audio_path):
-                    os.remove(mixed_audio_path)
-
-    if not use_music:
-        shutil.copy2(rendered_video_path, final_output_path)
 
     emit(f"[+] Video generated: {final_video_path}!", "success")
 
