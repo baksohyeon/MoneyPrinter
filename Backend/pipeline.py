@@ -50,6 +50,13 @@ def run_generation_pipeline(
     use_music = data.get("useMusic", False)
     automate_youtube_upload = data.get("automateYoutubeUpload", False)
 
+    # Per-job provider overrides (frontend sends these in the payload).
+    # Empty string / None = use env / auto-priority.
+    provider_overrides = data.get("providers") or {}
+    imagegen_override = (provider_overrides.get("imagegen") or "").strip() or None
+    encoder_override = (provider_overrides.get("encoder") or "").strip() or None
+    subtitles_override = (provider_overrides.get("subtitles") or "").strip() or None
+
     emit("[Video to be generated]", "info")
     emit("   Subject: " + data["videoSubject"], "info")
     emit("   AI Model: " + str(ai_model), "info")
@@ -142,7 +149,7 @@ def run_generation_pipeline(
 
     # Optional: ask the imagegen provider to fill stock gaps with AI B-roll.
     imagegen_assets: list[KenBurnsAsset] = []
-    imagegen = get_imagegen_provider()
+    imagegen = get_imagegen_provider(imagegen_override)
     if imagegen and unmatched_terms:
         emit(
             f"[+] {imagegen.name}: generating {len(unmatched_terms)} B-roll image(s) for unmatched terms",
@@ -243,6 +250,7 @@ def run_generation_pipeline(
             sentences=sentences,
             audio_clips=paths,
             voice=voice_prefix,
+            provider_override=subtitles_override,
         )
     except Exception as err:
         emit(f"[-] Error generating subtitles: {err}", "error")
@@ -285,6 +293,7 @@ def run_generation_pipeline(
             threads=n_threads or 2,
             subtitles_position=subtitles_position or "center,bottom",
             text_color=text_color or "#FFFF00",
+            encoder_override=encoder_override,
         )
     except Exception as err:
         raise RuntimeError(

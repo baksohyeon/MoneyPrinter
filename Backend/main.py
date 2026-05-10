@@ -46,6 +46,49 @@ def models():
         )
 
 
+@app.route("/api/providers", methods=["GET"])
+def providers_status():
+    """Snapshot of which providers the pipeline would auto-select right now.
+
+    Used by the frontend to show a status row before the user generates a job —
+    so the choice of encoder, stock sources, subtitle backend, and imagegen is
+    visible upfront rather than only in the post-launch log stream.
+    """
+    from providers.encoder.factory import get_encoder
+    from providers.imagegen.factory import get_imagegen_provider
+    from providers.stock.factory import get_stock_providers
+    from providers.subtitles.factory import get_subtitles_provider
+    from utils import is_mac_fast_path_available
+
+    encoder = get_encoder()
+    stock_providers = get_stock_providers()
+    subs_provider = get_subtitles_provider()
+    imagegen = get_imagegen_provider()
+
+    return jsonify(
+        {
+            "status": "success",
+            "platform": {
+                "mac_fast_path": is_mac_fast_path_available(),
+            },
+            "encoder": {
+                "name": encoder.name,
+                "fast": encoder.name == "videotoolbox",
+            },
+            "stock": [p.name for p in stock_providers],
+            "subtitles": {
+                "name": subs_provider.name,
+                "fast": subs_provider.name == "mlx_whisper",
+            },
+            "imagegen": (
+                {"name": imagegen.name, "enabled": True}
+                if imagegen
+                else {"name": None, "enabled": False}
+            ),
+        }
+    )
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     data = request.get_json() or {}

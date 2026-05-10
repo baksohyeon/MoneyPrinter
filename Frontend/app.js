@@ -6,7 +6,9 @@ const songFiles = document.getElementById("songFiles");
 const paragraphNumber = document.getElementById("paragraphNumber");
 const youtubeToggle = document.getElementById("youtubeUploadToggle");
 const useMusicToggle = document.getElementById("useMusicToggle");
+const aiBrollToggle = document.getElementById("aiBrollToggle");
 const customPrompt = document.getElementById("customPrompt");
+const providerStatus = document.getElementById("providerStatus");
 const generateButton = document.getElementById("generateButton");
 const cancelButton = document.getElementById("cancelButton");
 const advancedOptionsToggle = document.getElementById("advancedOptionsToggle");
@@ -103,6 +105,57 @@ async function loadOllamaModels(reuseEnabled) {
   } catch {
     setModelOptions([fallbackModel], fallbackModel);
     showToast("Could not load Ollama models. Is backend/Ollama running?", "error");
+  }
+}
+
+// ===== PROVIDER STATUS =====
+function renderProviderStatus(state) {
+  if (!providerStatus) return;
+  if (!state || state.status !== "success") {
+    providerStatus.innerHTML =
+      '<span class="provider-status-empty">Provider info unavailable.</span>';
+    return;
+  }
+
+  const badges = [];
+  const encName = (state.encoder && state.encoder.name) || "?";
+  const encFast = state.encoder && state.encoder.fast;
+  badges.push(
+    `<span class="provider-badge${encFast ? " is-fast" : ""}"><strong>encoder</strong> ${encName}</span>`
+  );
+
+  const stockList = Array.isArray(state.stock) ? state.stock : [];
+  badges.push(
+    `<span class="provider-badge${stockList.length > 1 ? " is-fast" : ""}"><strong>stock</strong> ${stockList.length ? stockList.join(", ") : "(none)"}</span>`
+  );
+
+  const subsName = (state.subtitles && state.subtitles.name) || "?";
+  const subsFast = state.subtitles && state.subtitles.fast;
+  badges.push(
+    `<span class="provider-badge${subsFast ? " is-fast" : ""}"><strong>subs</strong> ${subsName}</span>`
+  );
+
+  const igEnabled = state.imagegen && state.imagegen.enabled;
+  const igName = (state.imagegen && state.imagegen.name) || "off";
+  badges.push(
+    `<span class="provider-badge${igEnabled ? "" : " is-off"}"><strong>imagegen</strong> ${igEnabled ? igName : "off"}</span>`
+  );
+
+  providerStatus.innerHTML = badges.join("");
+}
+
+async function loadProviderStatus() {
+  try {
+    const data = await apiRequest("/api/providers", {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    renderProviderStatus(data);
+  } catch {
+    if (providerStatus) {
+      providerStatus.innerHTML =
+        '<span class="provider-status-empty">Backend offline. Provider status unknown.</span>';
+    }
   }
 }
 
@@ -327,6 +380,10 @@ async function generateVideo() {
     subtitlesPosition: document.getElementById("subtitlesPosition").value,
     customPrompt: customPrompt.value,
     color: subtitlesColor.value,
+    providers: {
+      // Per-job overrides; empty = let the backend auto-pick.
+      imagegen: aiBrollToggle && aiBrollToggle.checked ? "mflux" : "",
+    },
   };
 
   try {
@@ -375,6 +432,7 @@ logClearBtn.addEventListener("click", () => {
 const toggleIds = [
   "youtubeUploadToggle",
   "useMusicToggle",
+  "aiBrollToggle",
   "reuseChoicesToggle",
 ];
 const fieldIds = [
@@ -392,6 +450,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     localStorage.getItem("reuseChoicesToggleValue") === "true";
 
   await loadOllamaModels(reuseEnabled);
+  loadProviderStatus();
 
   aiModel.addEventListener("change", (e) => {
     localStorage.setItem("aiModelValue", e.target.value);

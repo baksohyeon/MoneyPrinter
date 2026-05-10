@@ -53,7 +53,12 @@ def save_video(video_url: str, directory: str = str(TEMP_DIR)) -> str:
 
 
 def generate_subtitles(
-    audio_path: str, sentences: List[str], audio_clips: List[AudioFileClip], voice: str
+    audio_path: str,
+    sentences: List[str],
+    audio_clips: List[AudioFileClip],
+    voice: str,
+    *,
+    provider_override: Optional[str] = None,
 ) -> str:
     """Resolve a SubtitlesProvider via factory and write its SRT to disk.
 
@@ -61,11 +66,11 @@ def generate_subtitles(
       1. AssemblyAI if ASSEMBLY_AI_API_KEY is set (preserves prior behavior)
       2. mlx-whisper if Mac fast-path + package available
       3. Local sentence-level timing fallback
-    Override via SUBTITLES_PROVIDER env or job payload.
+    Override via SUBTITLES_PROVIDER env or the ``provider_override`` arg.
     """
     from providers.subtitles import get_subtitles_provider
 
-    provider = get_subtitles_provider()
+    provider = get_subtitles_provider(provider_override)
     log(f"[+] Creating subtitles via {provider.name}", "info")
 
     subtitles = provider.transcribe(

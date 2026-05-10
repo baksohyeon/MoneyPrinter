@@ -237,6 +237,68 @@
         margin: 24px 0;
       }
 
+      /* ===== SECTION HEADER (advanced panel groups) ===== */
+      .section-header {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        margin: 8px 0 -4px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+      }
+
+      .section-header:first-of-type {
+        border-top: none;
+        padding-top: 0;
+      }
+
+      /* ===== PROVIDER STATUS ROW ===== */
+      .provider-status {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 0 0 12px;
+        font-size: 0.72rem;
+        color: var(--text-3);
+        line-height: 1.4;
+      }
+
+      .provider-status-empty {
+        color: var(--text-3);
+        font-style: italic;
+      }
+
+      .provider-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 8px;
+        background: var(--input-bg);
+        border-radius: 999px;
+        font-weight: 500;
+        color: var(--text-2);
+      }
+
+      .provider-badge strong {
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      .provider-badge.is-fast {
+        background: #e6f4ea;
+        color: #1e6e3a;
+      }
+
+      .provider-badge.is-fast strong {
+        color: #14532d;
+      }
+
+      .provider-badge.is-off {
+        opacity: 0.6;
+      }
+
       /* ===== ADVANCED TOGGLE ===== */
       .advanced-toggle {
         display: flex;
@@ -354,10 +416,29 @@
         font-weight: 500;
         color: var(--text-2);
         transition: color 0.15s;
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-start;
+        line-height: 1.3;
       }
 
       .toggle:hover .toggle-text {
         color: var(--text);
+      }
+
+      .toggle-text .label-hint {
+        display: block;
+        font-size: 0.72rem;
+        font-weight: 400;
+        color: var(--text-3);
+        margin-top: 2px;
+      }
+
+      /* Give wrapped toggles room to breathe when hint text is long. */
+      .toggles-row .toggle {
+        flex: 1 1 240px;
+        min-width: 0;
+        align-items: flex-start;
       }
 
       /* ===== STATUS AREA ===== */
@@ -730,7 +811,10 @@
       <div class="card">
         <!-- Subject -->
         <div class="form-group">
-          <label for="videoSubject" class="label">Video Subject</label>
+          <label for="videoSubject" class="label">
+            Video Subject
+            <span class="label-hint">&mdash; one sentence describing the topic. The script and stock searches both come from this.</span>
+          </label>
           <textarea
             id="videoSubject"
             name="videoSubject"
@@ -766,17 +850,25 @@
         <div id="advancedOptions" class="advanced-panel">
           <div class="advanced-inner">
             <div class="advanced-content">
-              <!-- AI Model + Voice -->
+              <!-- ① Voice & Script -->
+              <div class="section-header">① Voice &amp; Script</div>
+
               <div class="form-grid">
                 <div class="form-group">
-                  <label for="aiModel" class="label">Ollama Model</label>
+                  <label for="aiModel" class="label">
+                    Ollama Model
+                    <span class="label-hint">&mdash; LLM that writes the script and YouTube metadata.</span>
+                  </label>
                   <select id="aiModel" name="aiModel" class="form-select">
                     <option value="">Loading Ollama models...</option>
                   </select>
                 </div>
 
                 <div class="form-group">
-                  <label for="voice" class="label">Voice</label>
+                  <label for="voice" class="label">
+                    Voice
+                    <span class="label-hint">&mdash; TikTok TTS voice the narration is read in.</span>
+                  </label>
                   <select id="voice" name="voice" class="form-select">
                     <optgroup label="Character">
                       <option value="en_us_ghostface">Ghost Face</option>
@@ -853,12 +945,45 @@
                 </div>
               </div>
 
-              <!-- Subtitles Position + Color -->
+              <div class="form-group">
+                <label for="paragraphNumber" class="label">
+                  Paragraphs
+                  <span class="label-hint">&mdash; how many paragraphs the script should be. More = longer video.</span>
+                </label>
+                <input
+                  type="number"
+                  id="paragraphNumber"
+                  name="paragraphNumber"
+                  class="form-input"
+                  value="1"
+                  min="1"
+                  max="100"
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="customPrompt" class="label">
+                  Custom Prompt
+                  <span class="label-hint">&mdash; extra instructions appended to the script-generation prompt. Leave blank to use the default.</span>
+                </label>
+                <textarea
+                  id="customPrompt"
+                  name="customPrompt"
+                  class="form-textarea"
+                  rows="3"
+                  placeholder="Override the default AI prompt"
+                ></textarea>
+              </div>
+
+              <!-- ② Visual -->
+              <div class="section-header">② Visual</div>
+
               <div class="form-grid">
                 <div class="form-group">
-                  <label for="subtitlesPosition" class="label"
-                    >Subtitles Position</label
-                  >
+                  <label for="subtitlesPosition" class="label">
+                    Subtitles Position
+                    <span class="label-hint">&mdash; where on-screen the captions appear.</span>
+                  </label>
                   <select
                     id="subtitlesPosition"
                     name="subtitlesPosition"
@@ -879,9 +1004,10 @@
                 </div>
 
                 <div class="form-group">
-                  <label for="subtitlesColor" class="label"
-                    >Subtitle Color</label
-                  >
+                  <label for="subtitlesColor" class="label">
+                    Subtitle Color
+                    <span class="label-hint">&mdash; foreground color of the burned-in captions.</span>
+                  </label>
                   <div class="color-field">
                     <span class="color-dot" id="colorDot"></span>
                     <select
@@ -900,43 +1026,11 @@
                 </div>
               </div>
 
-              <!-- Threads + Paragraphs -->
-              <div class="form-grid">
-                <div class="form-group">
-                  <label for="threads" class="label">Threads</label>
-                  <input
-                    type="number"
-                    id="threads"
-                    name="threads"
-                    class="form-input"
-                    value="2"
-                    min="1"
-                    max="100"
-                  />
-                </div>
-
-                <div class="form-group">
-                  <label for="paragraphNumber" class="label">Paragraphs</label>
-                  <input
-                    type="number"
-                    id="paragraphNumber"
-                    name="paragraphNumber"
-                    class="form-input"
-                    value="1"
-                    min="1"
-                    max="100"
-                  />
-                </div>
-              </div>
-
-              <!-- Songs Folder -->
               <div class="form-group">
-                <label for="songFiles" class="label"
-                  >Songs Folder
-                  <span class="label-hint"
-                    >&mdash; select a folder with MP3 files</span
-                  ></label
-                >
+                <label for="songFiles" class="label">
+                  Songs Folder
+                  <span class="label-hint">&mdash; folder of .mp3 files mixed under the narration at 10% volume. Only used when "Use Music" is on.</span>
+                </label>
                 <input
                   type="file"
                   id="songFiles"
@@ -947,19 +1041,57 @@
                 />
               </div>
 
-              <!-- Custom Prompt -->
-              <div class="form-group">
-                <label for="customPrompt" class="label">Custom Prompt</label>
-                <textarea
-                  id="customPrompt"
-                  name="customPrompt"
-                  class="form-textarea"
-                  rows="3"
-                  placeholder="Override the default AI prompt"
-                ></textarea>
+              <div class="toggles-row">
+                <label class="toggle">
+                  <input
+                    type="checkbox"
+                    id="useMusicToggle"
+                    name="useMusicToggle"
+                  />
+                  <span class="toggle-track">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                  <span class="toggle-text">
+                    Use Music
+                    <span class="label-hint">&mdash; mix a random track from the folder above.</span>
+                  </span>
+                </label>
+
+                <label class="toggle">
+                  <input
+                    type="checkbox"
+                    id="aiBrollToggle"
+                    name="aiBrollToggle"
+                  />
+                  <span class="toggle-track">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                  <span class="toggle-text">
+                    AI B-roll
+                    <span class="label-hint">&mdash; generate an image (FLUX/MFLUX) for any term that has no stock match, then animate it with Ken-Burns. Slow, ~30s/image. Mac M-series only.</span>
+                  </span>
+                </label>
               </div>
 
-              <!-- Toggles -->
+              <!-- ③ Output -->
+              <div class="section-header">③ Output</div>
+
+              <div class="form-group">
+                <label for="threads" class="label">
+                  Threads
+                  <span class="label-hint">&mdash; CPU threads given to ffmpeg when the libx264 fallback runs. Ignored on Mac VideoToolbox.</span>
+                </label>
+                <input
+                  type="number"
+                  id="threads"
+                  name="threads"
+                  class="form-input"
+                  value="2"
+                  min="1"
+                  max="100"
+                />
+              </div>
+
               <div class="toggles-row">
                 <label class="toggle">
                   <input
@@ -970,19 +1102,10 @@
                   <span class="toggle-track">
                     <span class="toggle-thumb"></span>
                   </span>
-                  <span class="toggle-text">Upload to YouTube</span>
-                </label>
-
-                <label class="toggle">
-                  <input
-                    type="checkbox"
-                    id="useMusicToggle"
-                    name="useMusicToggle"
-                  />
-                  <span class="toggle-track">
-                    <span class="toggle-thumb"></span>
+                  <span class="toggle-text">
+                    Upload to YouTube
+                    <span class="label-hint">&mdash; OAuth upload of the rendered file. Requires Backend/client_secret.json.</span>
                   </span>
-                  <span class="toggle-text">Use Music</span>
                 </label>
 
                 <label class="toggle">
@@ -994,7 +1117,10 @@
                   <span class="toggle-track">
                     <span class="toggle-thumb"></span>
                   </span>
-                  <span class="toggle-text">Reuse Choices</span>
+                  <span class="toggle-text">
+                    Reuse Choices
+                    <span class="label-hint">&mdash; remember these field values across page reloads.</span>
+                  </span>
                 </label>
               </div>
             </div>
@@ -1014,6 +1140,11 @@
             </div>
             <div class="log-viewer-body" id="logViewerBody"></div>
           </div>
+        </div>
+
+        <!-- Active providers (auto-detected on the backend) -->
+        <div class="provider-status" id="providerStatus">
+          <span class="provider-status-empty">Checking active providers&hellip;</span>
         </div>
 
         <!-- Actions -->
